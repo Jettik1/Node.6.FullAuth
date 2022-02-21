@@ -5,12 +5,13 @@ const {v4: uuidv4} = require('uuid')
 const mailService = require('./mail-service')
 const tokenService = require('./token-service')
 const UserDTO = require('../DTOs/user-dto')
+const ApiError = require('../exceptions/api-error')
 
 class UserService {
     async registration(email,password){
         const candidate = await UserModel.findOne({email}) // проверяем есть ли такой пользователь в БД
         if(candidate) { // если есть - Бросаем ошибку
-            throw new Error(`Пользователь с таким эмейлом ${email} уже сущетвует`)
+            throw ApiError.BadRequest(`Пользователь с таким эмейлом ${email} уже сущетвует`)
         }
         // Если нет -
         const hashPassword = await bcrypt.hash(password, 3); // хешируем пароль
@@ -27,10 +28,32 @@ class UserService {
     async activate(activationLink) {
         const user = await UserModel.findOne({activationLink})
         if(!user) {
-            throw new Error('Некорректная ссылка активации')
+            throw ApiError.BadRequest('Некорректная ссылка активации')
         }
         user.isActivated = true;
         await user.save();
+    }
+
+    async login(email, password) {
+        const user = await UserModel.findOne({email})
+        if(!user) {
+            throw ApiError.BadRequest('User not found')
+        }
+        const isPasswordEqual = await bcrypt.compare(password, user.password)
+        if(!isPasswordEqual) {
+            throw ApiError.BadRequest('Wrong Password')
+        }
+        const userDTO = new UserDTO(user);
+        const tokens = await tokenService.generateTokens({...userDTO})
+
+        await tokenService.saveToken(userDTO.id, tokens.refreshToken) // сохраняем рефреш токен в базу данных
+
+        return {...tokens, user: userDTO} // возвращаем информацию о пользователе и токены
+    }
+
+    async logout(refreshToken) {
+        const token = await tokenService.removeToken(refreshToken);
+        return token;
     }
 }
 
